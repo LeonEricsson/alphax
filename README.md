@@ -1,2 +1,2 @@
 # alphax
-distruted + fast alphazero in jax
+distributed + fast alphazero in jax
