@@ -24,9 +24,9 @@ import chex
 import jax
 import jax.numpy as jnp
 
-from src.mcts import action_selection
-from src.mcts import base
-from src.mcts import tree as tree_lib
+from . import action_selection
+from . import base
+from . import tree as tree_lib
 
 Tree = tree_lib.Tree
 T = TypeVar('T')

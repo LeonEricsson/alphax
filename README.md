@@ -1,3 +1,5 @@
+*NOTE: this branch will not work until a proper stochastic environment is implemented*
+
 ## alphax
 an alphazero training and inference framework, built around [mctx](https://github.com/google-deepmind/mctx).
 

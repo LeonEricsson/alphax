@@ -21,7 +21,7 @@ from typing import TypeVar
 
 import chex
 
-from src.mcts import tree
+from . import tree
 
 
 # Parameters are arbitrary nested structures of `chex.Array`.

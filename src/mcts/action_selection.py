@@ -20,10 +20,10 @@ import chex
 import jax
 import jax.numpy as jnp
 
-from src.mcts import base
-from src.mcts import qtransforms
-from src.mcts import seq_halving
-from src.mcts import tree as tree_lib
+from . import base
+from . import qtransforms
+from . import seq_halving
+from . import tree as tree_lib
 
 
 def switching_action_selection_wrapper(
