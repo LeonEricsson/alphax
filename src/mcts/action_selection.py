@@ -20,10 +20,10 @@ import chex
 import jax
 import jax.numpy as jnp
 
-from . import base
-from . import qtransforms
-from . import seq_halving
-from . import tree as tree_lib
+from src.mcts import base
+from src.mcts import qtransforms
+from src.mcts import seq_halving
+from src.mcts import tree as tree_lib
 
 
 def switching_action_selection_wrapper(
@@ -92,7 +92,15 @@ def muzero_action_selection(
     to_argmax = value_score + policy_score + node_noise_score
 
     # Masking the invalid actions at the root.
-    return masked_argmax(to_argmax, tree.root_invalid_actions * (depth == 0))
+    action = masked_argmax(to_argmax, tree.root_invalid_actions * (depth == 0))
+
+    action = jax.lax.select(
+        tree.is_chance[node_index],
+        jax.random.categorical(rng_key, prior_logits).astype(jnp.int32),
+        action,
+    )
+
+    return action
 
 
 @chex.dataclass(frozen=True)
@@ -205,8 +213,13 @@ def gumbel_muzero_interior_action_selection(
     )
 
     chex.assert_rank(to_argmax, 1)
+    action = jax.lax.select(
+        tree.is_chance[node_index],
+        jax.random.categorical(rng_key, prior_logits).astype(jnp.int32),
+        jnp.argmax(to_argmax, axis=-1).astype(jnp.int32),
+    )
 
-    return jnp.argmax(to_argmax, axis=-1).astype(jnp.int32)
+    return action
 
 
 def masked_argmax(

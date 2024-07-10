@@ -21,11 +21,11 @@ import chex
 import jax
 import jax.numpy as jnp
 
-from . import action_selection
-from . import base
-from . import qtransforms
-from . import search
-from . import seq_halving
+from src.mcts import action_selection
+from src.mcts import base
+from src.mcts import qtransforms
+from src.mcts import search
+from src.mcts import seq_halving
 
 
 def muzero_policy(

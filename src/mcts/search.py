@@ -24,9 +24,9 @@ import chex
 import jax
 import jax.numpy as jnp
 
-from . import action_selection
-from . import base
-from . import tree as tree_lib
+from src.mcts import action_selection
+from src.mcts import base
+from src.mcts import tree as tree_lib
 
 Tree = tree_lib.Tree
 T = TypeVar('T')
@@ -259,7 +259,7 @@ def expand(
     chex.assert_shape(step.value, [batch_size])
     tree = update_tree_node(
         tree, next_node_index, step.prior_logits, step.value,
-        embedding, step.is_terminal,
+        embedding, step.is_chance, step.is_terminal,
     )
 
     # Return updated tree topology.
@@ -350,6 +350,7 @@ def update_tree_node(
         prior_logits: chex.Array,
         value: chex.Array,
         embedding: chex.Array,
+        is_chance: chex.Array,
         is_terminal: chex.Array,
 ) -> Tree[T]:
     """Updates the tree at node index.
@@ -388,6 +389,7 @@ def update_tree_node(
             lambda t, s: batch_update(t, s, node_index),
             tree.embeddings, embedding,
         ),
+        is_chance=batch_update(tree.is_chance, is_chance, node_index),
         is_terminal=batch_update(tree.is_terminal, is_terminal, node_index),
     )
 
@@ -434,12 +436,16 @@ def instantiate_tree_from_root(
         embeddings=jax.tree_util.tree_map(_zeros, root.embedding),
         root_invalid_actions=root_invalid_actions,
         extra_data=extra_data,
+        is_chance=jnp.zeros(batch_node, dtype=jnp.bool_),
         is_terminal=jnp.zeros(batch_node, dtype=jnp.bool_),
     )
 
     root_index = jnp.full([batch_size], Tree.ROOT_INDEX)
     tree = update_tree_node(
         tree, root_index, root.prior_logits, root.value, root.embedding,
+        jnp.zeros(
+            batch_size, dtype=jnp.bool_,
+        ),
         jnp.zeros(
             batch_size, dtype=jnp.bool_,
         ),

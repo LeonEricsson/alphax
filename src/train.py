@@ -16,6 +16,7 @@ from pgx.experimental import auto_reset
 from pydantic import BaseModel
 from torch.utils.tensorboard import SummaryWriter
 
+from chance import auto_chance
 from mcts.base import RecurrentFnOutput
 from mcts.base import RootFnOutput
 from mcts.policies import muzero_policy
@@ -213,6 +214,12 @@ def recurrent_fn(
     logits = logits - jnp.max(logits, axis=-1, keepdims=True)
 
     logits = jnp.where(
+        jnp.expand_dims(state.is_chance, axis=-1),
+        state._chance_probs,
+        logits,
+    )
+
+    logits = jnp.where(
         state.legal_action_mask,
         logits,
         jnp.finfo(
@@ -231,6 +238,7 @@ def recurrent_fn(
         discount=jax.lax.stop_gradient(discount),
         prior_logits=jax.lax.stop_gradient(logits),
         value=jax.lax.stop_gradient(value),
+        is_chance=jax.lax.stop_gradient(state.is_chance),
         is_terminal=jax.lax.stop_gradient(state.terminated),
     )
     return recurrent_fn_output, state
@@ -277,7 +285,7 @@ def selfplay(
 
         actor = state.current_player
         keys = jax.random.split(key2, batch_size)
-        state = jax.vmap(auto_reset(env.step, env.init))(
+        state = jax.vmap(auto_reset(auto_chance(env.step), env.init))(
             state,
             policy_output.action,
             keys,
@@ -458,7 +466,7 @@ def mcts_action(rng_key: KeyArray, state: State, batch_size: int):
                 key, subkey = jax.random.split(key)
                 action = jax.random.categorical(subkey, policy(state))
                 key, subkey = jax.random.split(key)
-                state = env.step(state, action, subkey)
+                state = auto_chance(env.step)(state, action, subkey)
                 return state, key
 
             leaf, _ = jax.lax.while_loop(cond, loop_fn, (state, rng_key))
@@ -499,6 +507,7 @@ def mcts_action(rng_key: KeyArray, state: State, batch_size: int):
             discount=discount,
             prior_logits=logits,
             value=value,
+            is_chance=state.is_chance,
             is_terminal=state.terminated,
         )
         return recurrent_fn_output, state
@@ -562,7 +571,7 @@ def eval_advanced(current_model: Model, opponents: Model, key: KeyArray):
 
         key, subkey = jax.random.split(key)
         keys = jax.random.split(subkey, batch_size)
-        state = jax.vmap(env.step)(state, actions, keys)
+        state = jax.vmap(auto_chance(env.step))(state, actions, keys)
 
         R = R + state.rewards[jnp.arange(batch_size), agent]
         return (key, state, R)
@@ -610,7 +619,7 @@ def eval_intermediate(current_model: Model, key: KeyArray):
 
         key, subkey = jax.random.split(key)
         keys = jax.random.split(subkey, batch_size)
-        state = jax.vmap(env.step)(state, actions, keys)
+        state = jax.vmap(auto_chance(env.step))(state, actions, keys)
 
         R = R + state.rewards[jnp.arange(batch_size), agent]
         return (key, state, R)
@@ -659,7 +668,7 @@ def eval_standard(current_model: Model, key: KeyArray):
 
         key, subkey = jax.random.split(key)
         keys = jax.random.split(subkey, batch_size)
-        state = jax.vmap(env.step)(state, actions, keys)
+        state = jax.vmap(auto_chance(env.step))(state, actions, keys)
 
         R = R + state.rewards[jnp.arange(batch_size), agent]
         return (key, state, R)
@@ -715,7 +724,7 @@ def eval_basic(current_model: Model, key: KeyArray):
         action = jax.random.categorical(subkey, logits, axis=-1)
         key, subkey = jax.random.split(key)
         keys = jax.random.split(subkey, batch_size)
-        state = jax.vmap(env.step)(state, action, keys)
+        state = jax.vmap(auto_chance(env.step))(state, action, keys)
         R = R + state.rewards[jnp.arange(batch_size), agent]
         return (key, state, R)
 
@@ -852,7 +861,7 @@ def init_env_states(rng_key: KeyArray, warmup_iterations: int = 10) -> State:
 
         key, subkey = jax.random.split(key)
         keys = jax.random.split(subkey, batch_size)
-        states = jax.vmap(auto_reset(env.step, env.init))(
+        states = jax.vmap(auto_reset(auto_chance(env.step), env.init))(
             states,
             action,
             keys,

@@ -17,7 +17,7 @@ import chex
 import jax
 import jax.numpy as jnp
 
-from . import tree as tree_lib
+from src.mcts import tree as tree_lib
 
 
 def qtransform_by_min_max(

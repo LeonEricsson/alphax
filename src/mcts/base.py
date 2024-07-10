@@ -20,7 +20,8 @@ from typing import Tuple
 from typing import TypeVar
 
 import chex
-from . import tree
+
+from src.mcts import tree
 
 
 # Parameters are arbitrary nested structures of `chex.Array`.
@@ -46,6 +47,7 @@ class RecurrentFnOutput:
     discount: chex.Array
     prior_logits: chex.Array
     value: chex.Array
+    is_chance: chex.Array
     is_terminal: chex.Array
 
 
