@@ -10,8 +10,8 @@ features:
     - AZ v. Random
     - AZ v. MCTS
     - AZ v. AZ
-- resume training from checkpoint
 - stochastic alphazero with chance nodes (on branch `stochastic_alpha_zero`)
+- resume training from checkpoint
 
 ## install
 
