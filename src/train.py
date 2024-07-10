@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 import optax
 import pgx
-from jaxtyping import Array, Float, PyTree, Bool
+from jaxtyping import Array
 from omegaconf import OmegaConf
 from pgx.experimental import act_randomly
 from pgx.experimental import auto_reset
@@ -24,6 +24,7 @@ from network import AZNet
 
 KeyArray = Array
 Model = Tuple[hk.Params, hk.State]
+State = pgx.State
 
 def set_environment_variables():
     os.environ['XLA_FLAGS'] = (
@@ -50,8 +51,7 @@ class Samples(NamedTuple):
 
 
 class Config(BaseModel):
-    env_id: pgx.EnvId = 'strike'
-    scenario: str = 'mediumv2'
+    env_id: pgx.EnvId = 'connect_four'
     seed: int = 42
     max_steps: int = 200 
     num_channels: int = 64 # az net
@@ -193,7 +193,7 @@ def recurrent_fn(
     model: Model,
     rng_key: KeyArray,
     action: Array,
-    state: pgx.State,
+    state: State,
 ):
     # model: params
     # state: embedding
@@ -240,8 +240,8 @@ def recurrent_fn(
 def selfplay(
     model: Model,
     rng_key: KeyArray,
-    state: pgx.State,
-) -> Tuple[pgx.State, Samples]:
+    state: State,
+) -> Tuple[State, Samples]:
     model_params, model_state = model
     batch_size = config.selfplay_batch_size // num_devices
 
@@ -253,7 +253,7 @@ def selfplay(
         discount: jnp.ndarray
         value_est: jnp.ndarray
 
-    def step_fn(state: pgx.State, key: KeyArray) -> StepFnOutput:
+    def step_fn(state: State, key: KeyArray) -> StepFnOutput:
         key1, key2 = jax.random.split(key)
         observation = state.observation
 
@@ -403,7 +403,7 @@ def train(model, opt_state, samples: Samples):
 
 #region    ---- EVALUATION ----
 
-def az_action(state: pgx.State, model: Model, key: KeyArray) -> pgx.State:
+def az_action(state: State, model: Model, key: KeyArray) -> State:
     model_params, model_state = model
     (logits, value), _ = forward.apply(
         model_params,
@@ -426,12 +426,12 @@ def az_action(state: pgx.State, model: Model, key: KeyArray) -> pgx.State:
     return policy_output.action
 
 
-def random_action(state: pgx.State, key: KeyArray) -> pgx.State:
+def random_action(state: State, key: KeyArray) -> State:
     action = act_randomly(key, state.legal_action_mask)
     return action
 
 
-def mcts_action(rng_key: KeyArray, state: pgx.State, batch_size: int):
+def mcts_action(rng_key: KeyArray, state: State, batch_size: int):
     def policy(state):
         """Random policy."""
         logits = jnp.ones_like(state.legal_action_mask, dtype=jnp.float32)
@@ -837,7 +837,7 @@ def add_opponent(opponents: Model, new_model: Model) -> Model:
 
 
 @jax.pmap
-def init_env_states(rng_key: KeyArray, warmup_iterations: int = 10) -> pgx.State:
+def init_env_states(rng_key: KeyArray, warmup_iterations: int = 10) -> State:
     batch_size = config.selfplay_batch_size // num_devices
     rng_key, sub_key = jax.random.split(rng_key)
     keys = jax.random.split(sub_key, batch_size)
