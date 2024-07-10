@@ -1,5 +1,5 @@
 ## alphax
-a jax-native alphazero training and inference framework, built around [mctx](https://github.com/google-deepmind/mctx).
+a jax-native training and inference framework for alphazero, built around [mctx](https://github.com/google-deepmind/mctx).
 
 features:
 
