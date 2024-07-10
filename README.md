@@ -51,7 +51,9 @@ class State:
 
 **jax** 
 
-jax is volatile, get's updated frequently. things will most likely crash if you don't use the intended version
+jax is volatile, get's updated frequently. things will most likely crash if you don't use the intended version.
+
+i use the now deprecated `jax.pmap` for explicit device parallelism, i may swap to `shard_map` in the future.
 
 **environment**
 
