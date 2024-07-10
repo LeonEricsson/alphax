@@ -58,7 +58,7 @@ class Config(BaseModel):
     num_layers: int = 3 # az net
     resnet_v2: bool = True
     selfplay_batch_size: int = 1024 
-    num_simulations: int = 64 # mcts simulations during selfplay
+    num_simulations: int = 512 # mcts simulations during selfplay
     max_num_steps: int = 64  # max env step when self playing
     training_batch_size: int = 4096
     lr_init: float = 0.001
@@ -68,9 +68,9 @@ class Config(BaseModel):
     # ['basic', 'standard', 'intermediate', 'advanced']
     eval_complexity: str = 'basic'
     eval_batch_size: int = 128
-    eval_interval: int = 10
-    ckpt_interval: int = 10
-    num_eval_opponents: int = 2
+    eval_interval: int = 25
+    ckpt_interval: int = 25
+    num_eval_opponents: int = 5
     value_loss_scale: float = 1.0
     dirichlet_alpha: float = 0.5
     custom_value_target: bool = False
