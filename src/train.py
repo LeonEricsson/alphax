@@ -2,14 +2,14 @@ import os
 import pickle
 import time
 from functools import partial
-from typing import NamedTuple
+from typing import NamedTuple, Tuple
 
 import haiku as hk
 import jax
 import jax.numpy as jnp
-import jaxtyping
 import optax
 import pgx
+from jaxtyping import Array, Float, PyTree, Bool
 from omegaconf import OmegaConf
 from pgx.experimental import act_randomly
 from pgx.experimental import auto_reset
@@ -22,32 +22,31 @@ from mcts.policies import muzero_policy
 from mcts.qtransforms import qtransform_by_min_max
 from network import AZNet
 
+KeyArray = Array
+Model = Tuple[hk.Params, hk.State]
 
-os.environ['XLA_FLAGS'] = (
-    '--xla_gpu_enable_triton_softmax_fusion=true '
-    '--xla_gpu_triton_gemm_any=True '
-    '--xla_gpu_enable_async_collectives=true '
-    '--xla_gpu_enable_latency_hiding_scheduler=true '
-    '--xla_gpu_enable_highest_priority_async_stream=true '
-)
-
-os.environ.update(
-    {
+def set_environment_variables():
+    os.environ['XLA_FLAGS'] = (
+        '--xla_gpu_enable_triton_softmax_fusion=true '
+        '--xla_gpu_triton_gemm_any=True '
+        '--xla_gpu_enable_async_collectives=true '
+        '--xla_gpu_enable_latency_hiding_scheduler=true '
+        '--xla_gpu_enable_highest_priority_async_stream=true '
+    )
+    os.environ.update({
         'NCCL_LL128_BUFFSIZE': '-2',
         'NCCL_LL_BUFFSIZE': '-2',
         'NCCL_PROTO': 'SIMPLE,LL,LL128',
-    }
-)
+    })
 
-devices = jax.local_devices()
-num_devices = len(devices)
+set_environment_variables()
 
-
-class Sample(NamedTuple):
-    obs: jnp.ndarray
-    policy_tgt: jnp.ndarray
-    value_tgt: jnp.ndarray
-    mask: jnp.ndarray
+# Data structures
+class Samples(NamedTuple):
+    obs: Array
+    policy_tgt: Array
+    value_tgt: Array
+    mask: Array
 
 
 class Config(BaseModel):
@@ -84,13 +83,16 @@ class Config(BaseModel):
     class Config:
         extra = 'forbid'
 
+# devices
+devices = jax.local_devices()
+num_devices = len(devices)
 
+# Config setup
 conf_dict = OmegaConf.from_cli()
-
 print(conf_dict)
 
-resume_run = conf_dict.get('resume_from')
 
+resume_run = conf_dict.get('resume_from')
 if resume_run is not None:
     with open(resume_run, 'rb') as f:
         ckpt = pickle.load(f)
@@ -116,9 +118,7 @@ if resume_run is not None:
 
 else:
     config: Config = Config(**conf_dict)
-
     resume = False
-
     buffer = None
 
     if config.name is None:
@@ -134,33 +134,17 @@ else:
 
     print(config)
 
-
+# Environment setup
 env = pgx.make(config.env_id)
 
-
+# Constants
 SAMPLES_PER_ITERATION: int = config.selfplay_batch_size * config.max_num_steps
 SAMPLES_PER_DEVICE: int = (
     config.selfplay_batch_size // num_devices
 ) * config.max_num_steps
 
 
-def forward_fn(x, is_eval=False):
-    net = AZNet(
-        num_actions=env.num_actions,
-        num_channels=config.num_channels,
-        num_blocks=config.num_layers,
-        resnet_v2=config.resnet_v2,
-    )
-    policy_out, value_out = net(
-        x,
-        is_training=not is_eval,
-        test_local_stats=False,
-    )
-    return policy_out, value_out
-
-
-forward = hk.without_apply_rng(hk.transform_with_state(forward_fn))
-
+# Model and optimizer setup
 
 # transition_steps = config.lr_steps * \
 #     ((config.buffer_size * SAMPLES_PER_DEVICE) // config.training_batch_size)
@@ -180,17 +164,35 @@ forward = hk.without_apply_rng(hk.transform_with_state(forward_fn))
 
 lr_schedule = config.lr_init
 
-
 optimizer = optax.adamw(
     learning_rate=lr_schedule,
     weight_decay=config.weight_decay,
 )
 
+
+def forward_fn(x: Array, is_eval: bool = False):
+    net = AZNet(
+        num_actions=env.num_actions,
+        num_channels=config.num_channels,
+        num_blocks=config.num_layers,
+        resnet_v2=config.resnet_v2,
+    )
+    policy_out, value_out = net(
+        x,
+        is_training=not is_eval,
+        test_local_stats=False,
+    )
+    return policy_out, value_out
+
+
+forward = hk.without_apply_rng(hk.transform_with_state(forward_fn))
+
+
 #region    ---- SELF-PLAY ----
 def recurrent_fn(
-    model,
-    rng_key: jnp.ndarray,
-    action: jnp.ndarray,
+    model: Model,
+    rng_key: KeyArray,
+    action: Array,
     state: pgx.State,
 ):
     # model: params
@@ -236,10 +238,10 @@ def recurrent_fn(
 
 @jax.pmap
 def selfplay(
-    model,
-    rng_key: jnp.ndarray,
-    state,
-) -> Sample:
+    model: Model,
+    rng_key: KeyArray,
+    state: pgx.State,
+) -> Tuple[pgx.State, Samples]:
     model_params, model_state = model
     batch_size = config.selfplay_batch_size // num_devices
 
@@ -251,7 +253,7 @@ def selfplay(
         discount: jnp.ndarray
         value_est: jnp.ndarray
 
-    def step_fn(state, key) -> StepFnOutput:
+    def step_fn(state: pgx.State, key: KeyArray) -> StepFnOutput:
         key1, key2 = jax.random.split(key)
         observation = state.observation
 
@@ -326,7 +328,7 @@ def selfplay(
     else:
         value_tgt = z
 
-    return state, Sample(
+    return state, Samples(
         obs=jnp.swapaxes(data.obs, 0, 1),
         policy_tgt=jnp.swapaxes(data.action_weights, 0, 1),
         value_tgt=jnp.swapaxes(value_tgt, 0, 1),
@@ -334,9 +336,10 @@ def selfplay(
     )
 #endregion
 
+
 #region    ---- TRAINING ----
 
-def loss_fn(model_params, model_state, data: Sample):
+def loss_fn(model_params, model_state, data: Samples):
     (logits, value), model_state = forward.apply(
         model_params,
         model_state,
@@ -361,7 +364,7 @@ def loss_fn(model_params, model_state, data: Sample):
 
 
 @partial(jax.pmap, axis_name='i')
-def train(model, opt_state, samples: Sample):
+def train(model, opt_state, samples: Samples):
 
     # convert into minibatches of certain length
     num_updates = samples.obs.shape[0] // config.training_batch_size
@@ -373,7 +376,7 @@ def train(model, opt_state, samples: Sample):
     )
 
     # Make batches
-    def train_net(carry, data: Sample):
+    def train_net(carry, data: Samples):
         model, opt_state = carry
         model_params, model_state = model
         grads, (model_state, policy_loss, value_loss) = jax.grad(loss_fn, has_aux=True)(
@@ -400,7 +403,7 @@ def train(model, opt_state, samples: Sample):
 
 #region    ---- EVALUATION ----
 
-def az_action(state, model, key) -> pgx.State:
+def az_action(state: pgx.State, model: Model, key: KeyArray) -> pgx.State:
     model_params, model_state = model
     (logits, value), _ = forward.apply(
         model_params,
@@ -423,12 +426,12 @@ def az_action(state, model, key) -> pgx.State:
     return policy_output.action
 
 
-def random_action(state, key) -> pgx.State:
+def random_action(state: pgx.State, key: KeyArray) -> pgx.State:
     action = act_randomly(key, state.legal_action_mask)
     return action
 
 
-def mcts_action(rng_key, state, batch_size):
+def mcts_action(rng_key: KeyArray, state: pgx.State, batch_size: int):
     def policy(state):
         """Random policy."""
         logits = jnp.ones_like(state.legal_action_mask, dtype=jnp.float32)
@@ -519,7 +522,7 @@ def mcts_action(rng_key, state, batch_size):
 
 
 @jax.pmap
-def eval_advanced(current_model, opponents, key):
+def eval_advanced(current_model: Model, opponents: Model, key: KeyArray):
     """Evaluation using full AZ vs previous checkpoints."""
     agent = 0
 
@@ -578,7 +581,7 @@ def eval_advanced(current_model, opponents, key):
 
 
 @jax.pmap
-def eval_intermediate(current_model, key):
+def eval_intermediate(current_model: Model, key: KeyArray):
     """Evaluation using full AZ vs MCTS."""
     agent = 0
 
@@ -626,7 +629,7 @@ def eval_intermediate(current_model, key):
 
 
 @jax.pmap
-def eval_standard(current_model, key):
+def eval_standard(current_model: Model, key: KeyArray):
     """Evaluation using full AZ vs random agent."""
     agent = 0
 
@@ -675,12 +678,12 @@ def eval_standard(current_model, key):
 
 
 @jax.pmap
-def eval_basic(current_model, rng_key):
+def eval_basic(current_model: Model, key: KeyArray):
     """Evaluation using AZ network vs random agent."""
     agent = 0
     my_model_params, my_model_state = current_model
 
-    key, subkey = jax.random.split(rng_key)
+    key, subkey = jax.random.split(key)
     batch_size = config.selfplay_batch_size // num_devices
     keys = jax.random.split(subkey, batch_size)
     state = jax.vmap(env.init)(keys)
@@ -728,8 +731,7 @@ def eval_basic(current_model, rng_key):
     return R, agent_is_blue
 
 
-def evaluate(model, opponents, keys):
-
+def evaluate(model: Model, opponents: Model, keys: KeyArray) -> Tuple[Array, Array]:
     eval_functions = {
         'basic': eval_basic,
         'standard': eval_standard,
@@ -743,10 +745,11 @@ def evaluate(model, opponents, keys):
     return R, agent_is_blue
 #endregion
 
+
 #region    ---- BUFFER ----
 
 @jax.pmap
-def init_buffer(samples):
+def init_buffer(samples: Samples) -> Samples:
     return jax.tree_util.tree_map(
         lambda x: jnp.zeros(
             (x.shape[0], x.shape[1] * config.buffer_size, *x.shape[2:]),
@@ -757,7 +760,7 @@ def init_buffer(samples):
 
 
 @jax.vmap
-def update_value_targets(input_tgt, input_mask):
+def update_value_targets(input_tgt: Array, input_mask: Array) -> Array:
     """
     Steps through the targets and value masks to update value targets of previously
     unfinished environments
@@ -787,7 +790,7 @@ def update_value_targets(input_tgt, input_mask):
 
 
 @partial(jax.pmap, donate_argnums=(0,))
-def update_buffer(buffer, samples):
+def update_buffer(buffer, samples: Samples) -> Samples:
 
     # Insert new sample at the end of the buffer
     buffer = jax.tree_util.tree_map(
@@ -808,7 +811,7 @@ def update_buffer(buffer, samples):
         buffer.mask[-128:, :],
     )
 
-    return Sample(
+    return Samples(
         buffer.obs,
         buffer.policy_tgt,
         buffer.value_tgt.at[-128:, :].set(updated_tgt),
@@ -817,7 +820,7 @@ def update_buffer(buffer, samples):
 
 
 @partial(jax.pmap, in_axes=(0, None))
-def fetch_from_buffer(buffer, idx):
+def fetch_from_buffer(buffer: Samples, idx: int) -> Samples:
     return jax.tree_util.tree_map(
         lambda x: x.reshape(-1, *x.shape[2:])[idx],
         buffer,
@@ -826,7 +829,7 @@ def fetch_from_buffer(buffer, idx):
 
 
 @jax.jit
-def add_opponent(opponents, new_model):
+def add_opponent(opponents: Model, new_model: Model) -> Model:
     def roll_and_insert(opponents_param, new_param):
         return jnp.roll(opponents_param, shift=1, axis=0).at[0].set(new_param)
 
@@ -834,7 +837,7 @@ def add_opponent(opponents, new_model):
 
 
 @jax.pmap
-def init_env_states(rng_key, warmup_iterations=10):
+def init_env_states(rng_key: KeyArray, warmup_iterations: int = 10) -> pgx.State:
     batch_size = config.selfplay_batch_size // num_devices
     rng_key, sub_key = jax.random.split(rng_key)
     keys = jax.random.split(sub_key, batch_size)
@@ -947,7 +950,7 @@ if __name__ == '__main__':
             )
 
         if iteration % config.ckpt_interval == 0:
-            """Store checkpoint"""
+            """ Store checkpoint """
             model_0, opt_state_0 = jax.tree_util.tree_map(
                 lambda x: x[0],
                 (model, opt_state),

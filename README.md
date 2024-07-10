@@ -7,4 +7,4 @@ distributed + fast alphazero in jax
 1. install [poetry](https://python-poetry.org/docs/)
 2. inside repo `poetry install`
 3. `poetry shell`
-4. install [JAX](https://jax.readthedocs.io/en/latest/installation.html)  with `poetry run pip3 install ...` (system dependent)
+4. install [JAX](https://jax.readthedocs.io/en/latest/installation.html) 0.4.30 with `poetry run pip3 install ...` (system dependent)
