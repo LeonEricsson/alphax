@@ -7,6 +7,7 @@ from typing import NamedTuple
 import haiku as hk
 import jax
 import jax.numpy as jnp
+import jaxtyping
 import optax
 import pgx
 from omegaconf import OmegaConf
@@ -55,18 +56,17 @@ class Config(BaseModel):
     env_id: pgx.EnvId = 'strike'
     scenario: str = 'mediumv2'
     seed: int = 42
-    max_num_iters: int = 200
-    num_channels: int = 64
-    num_layers: int = 3
+    max_steps: int = 200 
+    num_channels: int = 64 # az net
+    num_layers: int = 3 # az net
     resnet_v2: bool = True
-    selfplay_batch_size: int = 1024     # num of parallel env
-    num_simulations: int = 64
+    selfplay_batch_size: int = 1024 
+    num_simulations: int = 64 # mcts simulations during selfplay
     max_num_steps: int = 64  # max env step when self playing
     training_batch_size: int = 4096
-    # training_num_batches: int = 128
     lr_init: float = 0.001
-    # lr_end: float = 0.0001
-    # lr_steps: int = 100
+    lr_end: float = 0.0001
+    lr_steps: int = 100
     weight_decay: float = 1e-5
     # ['basic', 'standard', 'intermediate', 'advanced']
     eval_complexity: str = 'basic'
@@ -77,8 +77,8 @@ class Config(BaseModel):
     value_loss_scale: float = 1.0
     dirichlet_alpha: float = 0.5
     custom_value_target: bool = False
-    # buffer will contain (num_devices x buffer_size x selfplay_batch_size x
-    # max_num_steps) samples
+    # buffer holds 
+    # (num_devices x buffer_size x selfplay_batch_size x max_num_steps)
     buffer_size: int = 8
     num_eval_simulations: int = 256
     name: str = None
@@ -136,10 +136,8 @@ else:
 
     print(config)
 
-if config.env_id == 'strike':
-    env = Strike(config.scenario)
-else:
-    env = pgx.make(config.env_id)
+
+env = pgx.make(config.env_id)
 
 
 SAMPLES_PER_ITERATION: int = config.selfplay_batch_size * config.max_num_steps
@@ -190,7 +188,7 @@ optimizer = optax.adamw(
     weight_decay=config.weight_decay,
 )
 
-
+#region    ---- SELF-PLAY ----
 def recurrent_fn(
     model,
     rng_key: jnp.ndarray,
@@ -243,38 +241,6 @@ def recurrent_fn(
         is_terminal=jax.lax.stop_gradient(state.terminated),
     )
     return recurrent_fn_output, state
-
-
-@jax.pmap
-def init_env_states(rng_key, warmup_iterations=10):
-    batch_size = config.selfplay_batch_size // num_devices
-    rng_key, sub_key = jax.random.split(rng_key)
-    keys = jax.random.split(sub_key, batch_size)
-    states = jax.vmap(env.init)(keys)
-
-    def body_fn(states, key):
-        logits = jnp.where(states.legal_action_mask, 1.0,
-                           jnp.finfo(jnp.float32).min)
-
-        key, subkey = jax.random.split(key)
-        action = jax.random.categorical(subkey, logits, axis=-1)
-
-        key, subkey = jax.random.split(key)
-        keys = jax.random.split(subkey, batch_size)
-        states = jax.vmap(auto_reset(auto_chance(env.step), env.init))(
-            states,
-            action,
-            keys,
-        )
-
-        return states, None
-
-    rng_key, sub_key = jax.random.split(rng_key)
-    keys = jax.random.split(subkey, warmup_iterations)
-
-    states, _ = jax.lax.scan(body_fn, states, keys)
-
-    return states
 
 
 @jax.pmap
@@ -375,7 +341,9 @@ def selfplay(
         value_tgt=jnp.swapaxes(value_tgt, 0, 1),
         mask=jnp.swapaxes(value_mask, 0, 1),
     )
+#endregion
 
+#region    ---- TRAINING ----
 
 def loss_fn(model_params, model_state, data: Sample):
     (logits, value), model_state = forward.apply(
@@ -436,7 +404,10 @@ def train(model, opt_state, samples: Sample):
     )
 
     return model, opt_state, policy_loss.mean(), value_loss.mean()
+#endregion
 
+
+#region    ---- EVALUATION ----
 
 def az_action(state, model, key) -> pgx.State:
     model_params, model_state = model
@@ -780,26 +751,9 @@ def evaluate(model, opponents, keys):
     R, agent_is_blue = eval_functions[config.eval_complexity](model, keys)
 
     return R, agent_is_blue
+#endregion
 
-
-def opponent_tree(models):
-    # combine model list into a pytree
-    tree = jax.tree_util.tree_map(lambda x: x[None], models[0])
-    for i in range(1, len(models)):
-        tree = jax.tree_util.tree_map(
-            lambda x, y: jnp.concatenate([x, y[None]], 0),
-            tree,
-            models[i],
-        )
-
-
-@jax.jit
-def add_opponent(opponents, new_model):
-    def roll_and_insert(opponents_param, new_param):
-        return jnp.roll(opponents_param, shift=1, axis=0).at[0].set(new_param)
-
-    return jax.tree_util.tree_map(roll_and_insert, opponents, new_model)
-
+#region    ---- BUFFER ----
 
 @jax.pmap
 def init_buffer(samples):
@@ -878,6 +832,47 @@ def fetch_from_buffer(buffer, idx):
         lambda x: x.reshape(-1, *x.shape[2:])[idx],
         buffer,
     )
+#endregion
+
+
+@jax.jit
+def add_opponent(opponents, new_model):
+    def roll_and_insert(opponents_param, new_param):
+        return jnp.roll(opponents_param, shift=1, axis=0).at[0].set(new_param)
+
+    return jax.tree_util.tree_map(roll_and_insert, opponents, new_model)
+
+
+@jax.pmap
+def init_env_states(rng_key, warmup_iterations=10):
+    batch_size = config.selfplay_batch_size // num_devices
+    rng_key, sub_key = jax.random.split(rng_key)
+    keys = jax.random.split(sub_key, batch_size)
+    states = jax.vmap(env.init)(keys)
+
+    def body_fn(states, key):
+        logits = jnp.where(states.legal_action_mask, 1.0,
+                           jnp.finfo(jnp.float32).min)
+
+        key, subkey = jax.random.split(key)
+        action = jax.random.categorical(subkey, logits, axis=-1)
+
+        key, subkey = jax.random.split(key)
+        keys = jax.random.split(subkey, batch_size)
+        states = jax.vmap(auto_reset(auto_chance(env.step), env.init))(
+            states,
+            action,
+            keys,
+        )
+
+        return states, None
+
+    rng_key, sub_key = jax.random.split(rng_key)
+    keys = jax.random.split(subkey, warmup_iterations)
+
+    states, _ = jax.lax.scan(body_fn, states, keys)
+
+    return states
 
 
 if __name__ == '__main__':
@@ -924,20 +919,17 @@ if __name__ == '__main__':
         f.write(str(config))
         f.write('\n')
 
-    # Initialize logging dict
-
     log = {}
 
-    # Evaluation
     key, subkey = jax.random.split(key)
     keys = jax.random.split(subkey, num_devices)
     env_state = init_env_states(keys)
 
     while True:
         if iteration % config.eval_interval == 0:
+            """ Evaluation """
             time_pre_eval = time.perf_counter()
 
-            # Evaluation
             key, subkey = jax.random.split(key)
             R, agent_is_blue = evaluate(model, opponents, keys)
 
@@ -964,8 +956,8 @@ if __name__ == '__main__':
                 },
             )
 
-        # Store checkpoints
         if iteration % config.ckpt_interval == 0:
+            """Store checkpoint"""
             model_0, opt_state_0 = jax.tree_util.tree_map(
                 lambda x: x[0],
                 (model, opt_state),
@@ -993,7 +985,7 @@ if __name__ == '__main__':
             writer.add_scalar(f'{k}', v, iteration)
         writer.flush()
 
-        if iteration >= config.max_num_iters:
+        if iteration >= config.max_steps:
             break
 
         log = {}
@@ -1010,6 +1002,7 @@ if __name__ == '__main__':
         )  # (device, total_batch, ...)
 
         time_sample_generation = time.perf_counter() - st
+        
         # Update buffer and then get new samples
         if buffer is None:
             buffer = init_buffer(samples)
@@ -1019,8 +1012,6 @@ if __name__ == '__main__':
         # Sample indexes on CPU side
         key, subkey = jax.random.split(key)
 
-        # max_index = min(floor((iteration + 1) / 2) + 1, config.buffer_size) * SAMPLES_PER_DEVICE
-
         max_index = min(iteration + 1, config.buffer_size) * SAMPLES_PER_DEVICE
 
         # Use replacement if we have not filled buffer yet
@@ -1029,14 +1020,10 @@ if __name__ == '__main__':
         policy_loss = 0.0
         value_loss = 0.0
 
-        # if config.training_num_batches * config.training_batch_size <=
-        # max_index:
         idx = jax.random.choice(
             subkey,
             max_index,
-            # shape=(config.training_num_batches * config.training_batch_size,),
             shape=(config.buffer_size * SAMPLES_PER_DEVICE,),
-            # shape=(max_index * 2,),
             replace=True,
         )
         batch = fetch_from_buffer(buffer, -(idx + 1))

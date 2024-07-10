@@ -1,0 +1,47 @@
+[tool.poetry]
+name = "alphax"
+version = "1.0.0"
+description = ""
+authors = ["Leon Ericsson"]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.10"
+optax = "^0.1.9"
+dm-haiku = "^0.0.12"
+chex = "^0.1.85"
+omegaconf = "^2.3.0"
+pydantic = "^2.6.3"
+pgx = "^2.0.1"
+jax-tqdm = "^0.1.2"
+tensorboard = "^2.16.2"
+torch = {version = "^2.2.1+cpu", source = "pytorch_cpu"}
+pre-commit = "^3.7.0"
+matplotlib = "^3.8.3"
+svgpathtools = "^1.6.1"
+svgpath2mpl = "^1.0.0"
+pygame = "^2.5.2"
+jaxtyping = "^0.2.31"
+
+[tool.poetry.group.lsp]
+optional = true
+
+[tool.poetry.group.lsp.dependencies]
+python-lsp-server = "^1.10.0"
+python-language-server = {extras = ["all"], version = "^0.36.2"}
+
+
+[tool.poetry.group.dev.dependencies]
+notebook = "^7.1.1"
+pre-commit = "^3.7.0"
+
+
+[[tool.poetry.source]]
+name = "pytorch_cpu"
+url = "https://download.pytorch.org/whl/cpu"
+priority = "explicit"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
