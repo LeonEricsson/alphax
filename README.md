@@ -1,17 +1,18 @@
 ## alphax
-an alphazero training and inference framework, built around [mctx](https://github.com/google-deepmind/mctx).
+a jax-native alphazero training and inference framework, built around [mctx](https://github.com/google-deepmind/mctx).
 
 features:
 
-- SPMD allowing parallel data-collection (self-play) and training across multiple XLA devices. 
-- circular buffer to hold memory samples (replay buffer)
-- an array of evaluation functions 
+- SPMD, enabling parallel data-collection (self-play) and training across multiple XLA devices.
+- fully JIT-composable. 
+- circular buffer to hold memory samples (replay buffer).
+- a lineup of evaluation functions 
     - AZ Net v. Random
     - AZ v. Random
     - AZ v. MCTS
     - AZ v. AZ (League based)
-- stochastic alphazero with chance nodes (on branch `stochastic_alpha_zero`)
-- resume training from checkpoint
+- stochastic alphazero with chance nodes (on branch `stochastic_alpha_zero`).
+- resume training from checkpoint.
 
 ## install
 
