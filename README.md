@@ -9,7 +9,7 @@ features:
     - AZ Net v. Random
     - AZ v. Random
     - AZ v. MCTS
-    - AZ v. AZ
+    - AZ v. AZ (League based)
 - stochastic alphazero with chance nodes (on branch `stochastic_alpha_zero`)
 - resume training from checkpoint
 
