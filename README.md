@@ -3,7 +3,7 @@ a jax-native training and inference framework for alphazero, built around [mctx]
 
 features:
 
-- comprehensive SIMD and SPMD support, facilitating parallel data collection and training across XLA devices.
+- comprehensive SIMD and SPMD support; parallel data collection and training across XLA devices.
 - fully JIT-composable. 
 - circular buffer to hold memory samples (replay buffer).
 - a lineup of evaluation functions 
